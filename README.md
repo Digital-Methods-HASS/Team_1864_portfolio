@@ -1,1 +1,1 @@
-# Team_1864_portfolio
+Portfolio assignments for Liv, Faris, Sofie, and Astrid
