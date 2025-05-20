@@ -1,0 +1,254 @@
+---
+title: 'Tracking the war of 1864 through newspapers month by month'
+author: "Faris Piric, Sofie Eriksen"
+date: "2025-05-20"
+output: html_document
+---
+
+# Libraries 
+
+```{r, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Loading the necessary packages 
+
+library(tidyverse)     
+library(lubridate)     
+library(tidytext)     
+library(ggwordcloud)     
+library(urltools)
+library(dplyr)
+
+```
+
+# Loading and preparing our data
+
+```{r}
+# Loading 519 newspaper articles from 1864 for the whole of Denmark
+
+link1864 <-"https://labs.statsbiblioteket.dk/labsapi/api/aviser/export/fields?query=%22krigen%20i%201864%22%20%20OR%202.%20Slesvigske%20Krig%20%20AND%20py%3A1864&fields=link&fields=recordID&fields=timestamp&fields=pwa&fields=cer&fields=fulltext_org&fields=pageUUID&fields=editionUUID&fields=titleUUID&fields=editionId&fields=familyId&fields=newspaper_page&fields=newspaper_edition&fields=lplace&fields=location_name&fields=location_coordinates&max=-1&structure=header&structure=content&format=CSV"
+```
+
+```{r}
+url_decode(link1864)
+
+
+avis1864 <- read_csv(link1864)
+```
+
+
+```{r}
+# Ensuring the timestamp is in a Date format
+avis1864$timestamp <- as.Date(avis1864$timestamp)
+
+# Extracting the month as a full name (example, "January")
+avis1864$month <- format(avis1864$timestamp, "%B")
+```
+
+
+# Textmining
+
+
+```{r,warning=FALSE}
+# We load Max Odsbjergs stop word list for 1800's danish
+
+avis1864stop <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/1537cf14c3d46b3d30caa5d99f8758e9/raw/9f044a38505334f035be111c9a3f654a24418f6d/stopord_18_clean.csv")
+
+# We found many mistakes in the OCR, and many words which the stopword list failed to remove. The most prominent of these we remove manually, creating "new_stopwords"
+
+new_stopwords <- data_frame(word = c ("cm", "ct", "ds", "ai", "W", "thi", "cr","cn","dcn","flal","danfle","deel","stal", "rr", "ndo", "dc", "dm", "em", "vg", "oq", "ler", "bc", "ak", "eu", "cl", "ri", "dcr", "fr", "ann", "la", "jfn", "vcd", "hor", "th", "ztg", "cre","danfl", "mcd", "les", "nei", "bi", "bo", "bor", "w", "lod", "troe", "fordi", "ei", "flulle", "fig", "hen", "du", "ene", "bave", "mig", "bille", "hos", "par", "ilke"))
+
+# Here we bind Odsbjergs stop word list with our newly created list of words
+
+avis1864stop <- avis1864stop %>%
+  rename(word=word) %>%
+  rbind(new_stopwords)
+
+# At the end we remove the stop words from our newspapers, creating a new data set called "avis1864tidy"´
+
+avis1864tidy <- avis1864 %>%
+  unnest_tokens(word, fulltext_org) %>%
+  anti_join(avis1864stop) 
+```
+
+```{r}
+
+# We count the individual words to see, which words appear the most
+
+avis1864tidy %>%
+  count(word, sort = TRUE)
+
+```
+
+
+```{r}
+
+# We now sort the words by month and frequency, the words which appear the least are filtered to the top
+
+avis1864_monthly_counts <- avis1864tidy %>%
+  group_by(month, word) %>%
+  summarise(freq = n(), .groups = 'drop')
+
+            
+```           
+       
+       
+```{r,warning=FALSE}
+
+# Using the filter function, we tell R that all numbers in the data set must be counted as NA, and removed. This way we remove unwanted numbers from our data
+
+avis1864_no_numeric <- avis1864_monthly_counts %>% 
+  filter(is.na(as.numeric(word)))
+
+avis1864_no_numeric
+
+
+```
+
+
+```{r}
+# This bit of code tells us how many unique words are left in our data set. In this instance the result is 81283. For our purposes this is too many.
+
+length(unique(avis1864_no_numeric$word))
+```
+
+```{r}
+# We have decided that we only want words which appear more than 20 times. This not only removes many mistakes from the data set, but also brings the total count of unique words down to a much more manageable 1007, from the previous 81283. We have now created "avis1864_top_words".
+
+avis1864_top_words <- avis1864_no_numeric %>%
+  filter(freq>=20)
+
+```
+
+
+
+#Much of the following code we sourced from Max Odsbjerg. We have added to and made changes to this code, in order to make it fit our purpouses. Below follows a link leading to Odsbjergs github, from which we sourced code: 
+
+#https://github.com/maxodsbjerg/TextMiningStCroixAvis
+
+
+
+
+```{r}
+# The count function counts the words, sorted by month.
+
+avis1864_top_words %>% 
+  count(word, month, sort = TRUE)
+
+```
+
+
+```{r}
+# Now we group all the remaining 1007 unique words by month, count how many of these words appear in each month, and create a tibble called "total_words". Here we find that some months have plenty of words, like July and August which have 153, and 123 words respectively, while other months include relatively few words, like may with only 19.  
+
+avis1864_top_words %>% 
+  count(word, month) %>% 
+  group_by(month) %>% 
+  summarise(total = sum(n)) -> total_words
+
+total_words
+```
+
+```{r}
+
+# This piece of code groups our data by both word and month, as well as this it counts how many times a specific word appears each month. By using the "left_join" function we add our previously created "total_words" to the tibble. The result is a tibble where we count: The specific word, which month it appears in, how many times it appears in that month, and the total amount of times this word appears in our data set. We call this tibble "avis1864_count"
+
+avis1864_top_words %>% 
+  count(word,month, sort = TRUE) %>% 
+  left_join(total_words, by = "month") -> avis1864_count
+
+avis1864_count
+
+```
+
+
+# Applying tf_idf
+
+
+```{r}
+
+# Now we assign a tf-idf score to each word in each month, and create yet another new tibble this time called "avis1864_tf_idf"
+
+avis1864_count %>% 
+  bind_tf_idf(word, month, n) -> avis1864_tf_idf
+```
+
+```{r}
+
+# "arrange(desc(tf_idf))" tells R to show the words with the highest tf_idf rating at the top of our list
+
+avis1864_tf_idf %>% 
+  arrange(desc(tf_idf))
+```
+
+
+```{r}
+# Yet again we ask R to show the words with the highest tf_idf rating at the top, but this time we apply the code to our latest tibble
+
+avis1864_tf_idf %>% 
+  arrange(desc(tf_idf))
+```
+```{r}
+
+# A final tweaking of our data. We make sure that each month is shown in the correct order, this will make our final word clouds much easier to work with - this code was sourced through ChatGPT. We call this final tibble "avis1864_clean"
+
+avis1864_clean <- avis1864_tf_idf %>%
+  mutate(month = factor(month, 
+                        levels = c("January", "February", "March", "April", "May", "June", 
+                                   "July", "August", "September", "October", "November", "December")))
+
+```
+
+
+# Creating the visualization 
+
+
+```{r,warning=FALSE}
+
+# At the end we create 12 word clouds, one for each month of the year 1864, featuring the most prominent words from each month
+
+avis1864wordcloud <- avis1864_clean %>% 
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(month) %>% 
+  slice_max(order_by = tf_idf, n = 20, with_ties = FALSE) %>%   # <<< This element was sourced through ChatGPT
+  ungroup() %>% 
+  ggplot(aes(label = word, size = tf_idf, color = tf_idf)) +
+  geom_text_wordcloud_area() +
+  scale_size_area(max_size = 15) +  
+  theme_minimal() +
+  facet_wrap(~month, ncol = 4, scales = "free") +
+  scale_color_gradient(low = "darkred", high = "red") +
+  labs(
+    title = "Most prominent words for each month - 519 newspapers from the whole of Denmark",
+    subtitle = "Importance determined by term frequency (tf) - inversed document frequency (idf)",
+    caption = "Newspaper articles from the year 1864"
+  )
+
+avis1864wordcloud
+
+```
+
+
+
+
+#Due to the way in which wordclouds are shown in R markdown, the visualization is not easily readibly, we urge you to look at the saved png below, or our written assignment:
+
+
+
+
+```{r}
+
+# Save it
+
+ggsave(
+  plot = avis1864wordcloud, 
+  filename = here::here("figures", "avis1864wordcloud.png"), 
+  height = 5, 
+  width = 8, 
+)
+
+```
+
+
+
