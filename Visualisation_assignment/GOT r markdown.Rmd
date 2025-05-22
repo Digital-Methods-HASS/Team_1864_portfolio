@@ -1,0 +1,302 @@
+---
+title: "GOT"
+author: "Faris Piric, Sofie Eriksen"
+date: "2025-03-21"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      warning = FALSE,
+                      message = FALSE)
+
+library(tidyverse)
+library(here)
+
+# For text mining:
+
+
+library(pdftools)
+library(tidytext)
+library(textdata) 
+library(ggwordcloud)
+```
+
+### GOT:
+```{r get-document, include=FALSE}
+
+#first we load the Game of Thrones pdf into R
+
+GOT_path <- here("data","got.pdf")
+GOT_path
+GOT_text <- pdf_text(GOT_path)
+GOT_text
+```
+
+
+
+```{r single-page}
+
+#this example shows that it is possible to extract the data from one single page of many. In this example we use page 9
+
+GOT_p9 <- GOT_text[9]
+GOT_p9
+```
+
+###  wrangling:
+
+```{r split-lines}
+
+#here we separate each line on each page into separate rows, and remove the leading/trailing white space using the "stringr::str_trim() function
+
+GOT_df <- data.frame(GOT_text) %>% 
+  mutate(text_full = str_split(GOT_text, pattern = '\n')) %>% 
+  unnest(text_full) %>% 
+  mutate(text_full = str_trim(text_full)) 
+
+GOT_df
+
+```
+
+```{r tokenize}
+#now we get the tokens (which are unique individual words) the "GOT_tokens" function shows each word in its own row
+
+GOT_tokens <- GOT_df %>% 
+  unnest_tokens(word, text_full)
+GOT_tokens
+
+```
+
+```{r count-words}
+
+# now we count the words, this word count we call "GOT_wc"
+#if we run this function we see, that there are 11.826 unique words in Game of Thrones - the most used word it "the" with 17.988 instances. 
+
+GOT_wc <- GOT_tokens %>% 
+  count(word) %>% 
+  arrange(-n)
+GOT_wc
+```
+
+```{r stopwords}
+
+# as stated above the most common word in the book is "the", followed by "and", and "to". these words tell us very little, and are so called "stop words", below we remove these common words from the data 
+
+GOT_stop <- GOT_tokens %>% 
+  anti_join(stop_words) %>% 
+  select(-GOT_text)
+
+GOT_stop
+```
+```{r count-words2}
+
+#now we count the words once more, this time without the stop words. Now the most common word is "lord". it appears 1341 times.
+
+GOT_swc <- GOT_stop %>% 
+  count(word) %>% 
+  arrange(-n)
+
+GOT_swc
+```
+```{r skip-numbers}
+#Now we remove numbers. The following code asks: if you convert to as.numeric, is it NA? NA in this instance means words. If it is NA (is.na), then the data is kept, this means that we keep all words, whilst everything that is convertet to a number is filtered out:
+
+GOT_no_numeric <- GOT_stop %>% 
+  filter(is.na(as.numeric(word)))
+```
+
+### A word cloud of GOT words (non-numeric)
+
+```{r wordcloud-prep}
+# Using the code below we find that there are 11.209 unique words:
+length(unique(GOT_no_numeric$word))
+
+# For our puropuses 11.000 words are way too many. therefor we filter out the 100 most commonly used words, in order to create a word cloud later on:
+GOT_top100 <- GOT_no_numeric %>% 
+  count(word) %>% 
+  arrange(-n) %>% 
+  head(100)
+
+GOT_top100
+```
+
+```{r wordcloud}
+
+# Here we make the initial word cloud using ggplot. It does not clearly show which word is the most common, and is in general rather ugly, we change this below.
+
+GOT_cloud <- ggplot(data = GOT_top100, aes(label = word)) +
+  geom_text_wordcloud() +
+  theme_minimal()
+
+GOT_cloud
+```
+
+```{r wordcloud-pro}
+
+# Here we give our word cloud diffirent colours, and the shape of a star. The most common words are displayed larger than the less common ones. 
+
+ggplot(data = GOT_top100, aes(label = word, size = n)) +
+  geom_text_wordcloud_area(aes(color = n), shape = "star") +
+  scale_size_area(max_size = 15) +
+  scale_color_gradientn(colors = c("blue","green","red")) +
+  theme_minimal()
+```
+
+### Sentiment analysis
+
+
+```{r afinn}
+get_sentiments(lexicon = "afinn")
+# Note: may be prompted to download (yes)
+
+# Let's look at the pretty positive words:
+afinn_pos <- get_sentiments("afinn") %>% 
+  filter(value %in% c(3,4,5))
+
+# Do not look at negative words in class. 
+afinn_pos
+```
+
+bing: binary, "positive" or "negative"
+```{r bing}
+get_sentiments(lexicon = "bing")
+```
+
+```{r nrc}
+get_sentiments(lexicon = "nrc")
+```
+
+
+### Sentiment analysis with afinn, Game of Thrones: 
+
+```{r bind-afinn}
+#first we bind the words in Game of thrones to the "affin" lexicon:
+
+GOT_afinn <- GOT_stop %>% 
+  inner_join(get_sentiments("afinn"))
+
+GOT_afinn
+
+```
+```{r count-afinn}
+# Finding counts by sentiment ranking
+
+GOT_afinn_hist <- GOT_afinn %>% 
+  count(value)
+
+# Now we plot them. We can see that most words in GOT are negative, maybe not surprising if you are antiquated with the story:
+ggplot(data = GOT_afinn_hist, aes(x = value, y = n)) +
+  geom_col(aes(fill = value)) +
+  theme_bw()
+```
+
+```{r afinn-2}
+# Here we investigate some of the words in a bit more depth, we have chosen to look at the words with a ranking of 2:
+
+GOT_afinn2 <- GOT_afinn %>% 
+  filter(value == 2)
+```
+
+```{r afinn-2-more}
+# Here we check the words:
+unique(GOT_afinn2$word)
+
+# We count the words, and plot them using ggplot, resulting in a very hard to read graph including words such as "honor", and "congratulations"
+GOT_afinn2_n <- GOT_afinn2 %>% 
+  count(word, sort = TRUE) %>% 
+  mutate(word = fct_reorder(factor(word), n))
+
+ggplot(data = GOT_afinn2_n, aes(x = word, y = n)) +
+  geom_col() +
+  coord_flip() +
+  theme_bw()
+```
+```{r summarize-afinn}
+
+#here we summarise the results, and find that mean and median score is below zero, indicating a slight tendancy towards the use of negative words. In other words, they indicate a slightly negative overall sentiment, based on the AFFIN lexicon 
+
+GOT_summary <- GOT_afinn %>% 
+  summarize(
+    mean_score = mean(value),
+    median_score = median(value)
+  )
+
+GOT_summary
+
+```
+
+### NRC lexicon for sentiment analysis
+
+```{r bind-bing}
+
+# now we separate the words into different categories, depending on the feelings with which they are typically associated. We use the "inner_join()" function to combine the GOT non stopword text with the nrc lexicon:
+
+GOT_nrc <- GOT_stop %>% 
+  inner_join(get_sentiments("nrc"))
+```
+
+Wait, won't that exclude some of the words in our text? YES! We should check which are excluded using `anti_join()`:
+
+```{r check-exclusions}
+
+# By using the function above we have now excluded some words in our text. We check which words are excluded by using "anti_join()"
+
+GOT_exclude <- GOT_stop %>% 
+  anti_join(get_sentiments("nrc"))
+
+GOT_exclude
+
+# Here we count the excluded words individually:
+GOT_exclude_n <- GOT_exclude %>% 
+  count(word, sort = TRUE)
+
+head(GOT_exclude_n)
+```
+Now find some counts: 
+```{r count-bing}
+#here we find counts and plot them:
+
+GOT_nrc_n <- GOT_nrc %>% 
+  count(sentiment, sort = TRUE)
+
+ggplot(data = GOT_nrc_n, aes(x = sentiment, y = n)) +
+  geom_col(aes(fill = sentiment))+
+  theme_bw()
+```
+```{r count-nrc}
+
+# We can make more interesting graphs by counting by sentiment and word: 
+
+GOT_nrc_n5 <- GOT_nrc %>% 
+  count(word,sentiment, sort = TRUE) %>% 
+  group_by(sentiment) %>% 
+  top_n(5) %>% 
+  ungroup()
+
+GOT_nrc_gg <- ggplot(data = GOT_nrc_n5, aes(x = reorder(word,n), y = n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, ncol = 2, scales = "free") +
+  coord_flip() +
+  theme_minimal() +
+  labs(x = "Word", y = "count")
+
+# Show it
+GOT_nrc_gg
+
+# Save it
+ggsave(plot = GOT_nrc_gg, 
+       here("figures","GOT_nrc_sentiment.png"), 
+       height = 8, 
+       width = 5)
+
+```
+
+```{r nrc-confidence}
+#this example simply shows that a word can appear in multiple categories: "lord" is filtered by "distgust", "negative", "positive" and "trust" 
+
+lord <- get_sentiments(lexicon = "nrc") %>% 
+  filter(word == "lord")
+
+lord
+```
